@@ -1,4 +1,5 @@
 .vscode
+agent_space/
 __pycache__
 .pytest_cache/
 .ipynb_checkpoints/
