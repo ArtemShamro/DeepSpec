@@ -1,0 +1,12 @@
+{
+  "method": "eagle3",
+  "rank": 0,
+  "world_size": 1,
+  "gpu_name": "NVIDIA GeForce RTX 3090",
+  "target_name_or_path": "Qwen/Qwen3-4B",
+  "draft_name_or_path": "deepseek-ai/eagle3_qwen3_4b_ttt7",
+  "target_params": 4022468096,
+  "draft_params": 927344896,
+  "trained_draft_length": 7,
+  "post_load_allocated_bytes": 9958236160
+}

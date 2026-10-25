@@ -1,0 +1,70 @@
+{
+  "run_id": "20261024T174431Z_qwen3_4b_smoke",
+  "start_time": "2026-10-24T17:44:31.994173+00:00",
+  "config_path": "/home/user/Documents/DeepSpec/experiments/configs/qwen3_4b_smoke.py",
+  "opts": [],
+  "config": {
+    "datasets": [
+      [
+        "gsm8k",
+        3
+      ],
+      [
+        "math500",
+        3
+      ],
+      [
+        "aime25",
+        3
+      ]
+    ],
+    "draft_lengths": [
+      3
+    ],
+    "generation": {
+      "temperature": 1.0,
+      "max_new_tokens": 128,
+      "seed": 980406,
+      "enable_thinking": false
+    },
+    "methods": [
+      {
+        "name": "ar",
+        "draft_name_or_path": null
+      },
+      {
+        "name": "eagle3",
+        "draft_name_or_path": "deepseek-ai/eagle3_qwen3_4b_ttt7"
+      },
+      {
+        "name": "dflash",
+        "draft_name_or_path": "deepseek-ai/dflash_qwen3_4b_block7"
+      },
+      {
+        "name": "dspark",
+        "draft_name_or_path": "deepseek-ai/dspark_qwen3_4b_block7"
+      }
+    ],
+    "output_root": "experiments/results",
+    "step_timing": true,
+    "target_name_or_path": "Qwen/Qwen3-4B",
+    "warmup_samples": 1
+  },
+  "trained_draft_lengths": {
+    "eagle3": 7,
+    "dflash": 7,
+    "dspark": 7
+  },
+  "git": {
+    "commit": "bf4bf74d1745381b0fe4430de2172b82de5f4308",
+    "dirty": true
+  },
+  "versions": {
+    "python": "3.12.13",
+    "torch": "2.9.1+cu128",
+    "transformers": "5.10.2",
+    "cuda": "12.8",
+    "cudnn": 91002
+  },
+  "cuda_device_count": 1
+}

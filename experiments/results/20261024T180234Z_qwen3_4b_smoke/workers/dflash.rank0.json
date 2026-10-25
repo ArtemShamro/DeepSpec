@@ -1,0 +1,12 @@
+{
+  "method": "dflash",
+  "rank": 0,
+  "world_size": 1,
+  "gpu_name": "NVIDIA GeForce RTX 3090",
+  "target_name_or_path": "Qwen/Qwen3-4B",
+  "draft_name_or_path": "deepseek-ai/dflash_qwen3_4b_block7",
+  "target_params": 4022468096,
+  "draft_params": 1315339520,
+  "trained_draft_length": 7,
+  "post_load_allocated_bytes": 10740518912
+}
