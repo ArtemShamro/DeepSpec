@@ -92,7 +92,7 @@ warm-up cannot change the measured outputs (this is tested).
 | `workers/<method>.rank<r>.json` | after model loading | GPU name, target/draft parameter counts, allocated memory after loading |
 | `samples.<method>.rank<r>.jsonl` | flushed after every sample | one line per measured sample |
 | `steps.<method>.rank<r>.jsonl` | flushed after every sample | one line per speculative step |
-| `summary.jsonl` | rank 0, after each (method, dataset, K) | DeepSpec's own metrics row (`build_metrics_row`) |
+| `summary.jsonl` | rank 0, after each (method, dataset, K) | `metrics` (accepted-token metrics, below) and `deepspec_metrics` (DeepSpec's own `build_metrics_row`) |
 
 ### Sample record
 
@@ -104,14 +104,15 @@ warm-up cannot change the measured outputs (this is tested).
 | `num_steps` | speculative steps (verifications) |
 | `stop_reason` | `stop_token` or `length` (hit `max_new_tokens`) |
 | `target_prefill_ms` | prompt forward + first-token sampling |
-| `draft_prefill_ms` | drafter initialization from prompt features (`init_context`) |
-| `decode_ms` | end of draft prefill → end of generation; excludes both prefill parts |
+| `init_context_ms` | the method's state initialization from the prompt after target prefill (`init_context`; EAGLE-3 drafter prompt pass, DSpark/DFlash context features) |
+| `draft_ms`, `verification_ms`, `commit_ms`, `update_ms` | sums of the step values below, in step order |
 | `wall_ms` | host wall clock for the whole sample, device synchronized at start and end (cross-check) |
-| `prefill_peak_bytes` | peak allocated memory during target + draft prefill |
+| `prefill_peak_bytes` | peak allocated memory during target prefill + `init_context` |
 | `decode_peak_bytes` | peak allocated memory during decode only (stats reset after prefill) |
 
-`draft_prefill_ms`, `decode_ms` and `decode_peak_bytes` are `null` when the first sampled token is
-a stop token (no decode happens).
+`init_context_ms` and `decode_peak_bytes` are `null` when the first sampled token is a stop token
+(no decode happens; the four phase sums are then 0). With `step_timing=false` the four phase sums
+are `null`. Decode time is not stored: it is `draft_ms + verification_ms + commit_ms + update_ms`.
 
 ### Step record
 
@@ -123,12 +124,36 @@ a stop token (no decode happens).
 | `effective_len` | draft length after stop-token truncation (DeepSpec's `proposal_lengths`) |
 | `accepted` | accepted draft tokens |
 | `committed` | tokens committed this step: `accepted + 1`, or `accepted` when an accepted draft token is a stop token |
-| `draft_ms` | `propose` + `update` (drafter state update with committed tokens, e.g. EAGLE-3 cache extension) |
-| `verify_ms` | target forward on the proposal + acceptance decision |
+| `draft_ms` | `propose`: the drafter producing the proposal |
+| `verification_ms` | target forward on the proposal + acceptance decision |
+| `commit_ms` | rest of the step: token commit, KV crop, stop-token check, loop bookkeeping (after the final step also output trimming) |
+| `update_ms` | `update`: drafter state update with committed tokens (EAGLE-3 cache extension, DSpark/DFlash context features); 0 on the final stop-token step, which skips it |
 
-`draft_ms` / `verify_ms` are `null` with `step_timing=false`. Commit and KV crop are in `decode_ms`
-but in neither step latency. Invariant: `1 + Σ committed == generated_len`, or `≥` when
+The four step phases are `null` with `step_timing=false`. They share CUDA-event boundaries, so
+`target_prefill_ms + init_context_ms + Σ steps (draft + verification + commit + update)` covers the
+sample's GPU-stream timeline with no gaps or overlap; `wall_ms` is that plus host-only time. Invariants: `0 ≤ accepted ≤ effective_len ≤ drafted_len`;
+`committed ∈ {accepted, accepted + 1}`; `1 + Σ committed == generated_len`, or `≥` when
 `stop_reason == "length"`.
+
+### Summary row
+
+`accepted` counts draft tokens accepted by verification; `committed` also counts the bonus or
+corrected token the target appends. The two blocks use different conventions:
+
+| `metrics` field | Definition |
+|---|---|
+| `num_proposals` | speculative steps |
+| `draft_tokens_per_proposal` | Σ `effective_len` / proposals |
+| `acceptance_length` | Σ `accepted` / proposals; never exceeds `draft_tokens_per_proposal` |
+| `committed_per_step` | Σ `committed` / proposals (decoding progress per target forward) |
+| `draft_acceptance_rate` | Σ `accepted` / Σ `effective_len`; `null` when nothing was drafted (`ar`) |
+| `accept_rates_by_position` | per position `i`: steps with `accepted > i` / steps with `effective_len > i` |
+
+`deepspec_metrics` is DeepSpec's row unchanged. Its `acceptance_length` is **committed** tokens
+per step (it includes the bonus token, so it equals `metrics.committed_per_step`), and its
+`verify_rate` is Σ `committed` / (Σ `effective_len` + proposals). Both blocks are recomputed from
+the step records by `python -m experiments.metrics <run_dir>`. Runs written before this split
+have only DeepSpec's row, stored under `metrics`.
 
 ### Timing and memory method
 
@@ -158,7 +183,8 @@ Stack: torch 2.9.1+cu128, transformers 5.10.2, bf16, `sdpa`, `DynamicCache`, bsz
 Absolute latencies are specific to this HF eager stack.
 
 **Instrumentation overhead** (DSpark, GSM8K, 10 samples, K=7, 2 runs per setting): mean per-sample
-decode time 4751 ms with step timing vs 4752 ms without (−0.01%). Run-to-run spread for the same
+decode time 4751 ms with step timing vs 4752 ms without (−0.01%), measured with the earlier
+`decode_ms` field; the per-phase schema records the same number of events per step. Run-to-run spread for the same
 setting is about ±3%, so the overhead is below what this measurement can resolve, and within the
 ≤3% target. Acceptance results were identical in all four runs.
 

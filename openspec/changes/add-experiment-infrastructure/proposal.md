@@ -24,8 +24,8 @@ Every experiment in the matrix depends on this infrastructure, so it is the firs
   - a `K` above the length the checkpoint was trained with is rejected.
 - **Autoregressive baseline**: proposes zero draft tokens. It runs through the same target-model loop, KV cache and sampling code as the speculative methods.
 - **Per-sample and per-step instrumentation** covering every field listed in EXPERIMENTS.md "Data for Logging":
-  - prefill time, draft-side prefill time, decode time;
-  - draft and verification latency per step;
+  - target prefill and init-context time per sample;
+  - draft, verification, commit and update latency per step, with their per-sample sums;
   - requested / drafted / effective draft length, accepted and committed tokens;
   - prefill and decode peak allocated memory.
   - Timing uses GPU events, so it adds no extra host-device synchronization.

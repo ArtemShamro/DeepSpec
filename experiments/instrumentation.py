@@ -5,8 +5,11 @@ The evaluator's own callbacks are wrapped and passed to the unchanged
 the current stream; they are resolved with a single synchronize at sample end,
 so no host-device sync is added inside the loop (D2).
 
-    sample start ─ prefill ─▶ init_context ─▶ │ propose │ verify ─▶ post_verify ─▶ commit ─▶ │ update │
-                [target prefill] [draft prefill] [ draft ] [ verification ]                  [ draft ]
+Consecutive phases share boundary events, so with step timing on they tile the
+sample's GPU-stream timeline without gaps or overlap:
+
+    sample start ─ prefill ─▶ init_context ─▶ │ propose │ verify ─▶ post_verify ─ commit ─▶ │ update │ ─ stop check ─▶ next step
+                [target prefill] [init_context] [ draft ] [ verification ] [   commit     ] [ update ] [  commit   ]
 """
 
 from __future__ import annotations
@@ -24,14 +27,15 @@ from deepspec.eval.base_evaluator import generate_decoding_sample
 @dataclass
 class SampleTiming:
     target_prefill_ms: float
-    draft_prefill_ms: float | None
-    decode_ms: float | None
+    init_context_ms: float | None
     wall_ms: float
     prefill_peak_bytes: int
     decode_peak_bytes: int | None
-    # Per-step lists; None when step timing is off.
+    # Per-step phase lists, aligned by step index; None when step timing is off.
     step_draft_ms: list[float] | None
-    step_verify_ms: list[float] | None
+    step_verification_ms: list[float] | None
+    step_commit_ms: list[float] | None
+    step_update_ms: list[float] | None
 
 
 class _EventPool:
@@ -53,7 +57,8 @@ class _EventPool:
         return event
 
 
-# Indices into a step's event list.
+# Indices into a step's event list. The step ends where the next step's
+# PROPOSE_START (or the sample end) is.
 _PROPOSE_START, _PROPOSE_END, _VERIFY_END, _UPDATE_START, _UPDATE_END = range(5)
 
 
@@ -72,7 +77,7 @@ class SampleInstrument:
         self.drafted_lengths: list[int] = []
         self._steps: list[list[torch.cuda.Event | None]] = []
         self._prefill_end = None
-        self._draft_prefill_end = None
+        self._init_context_end = None
         self._prefill_peak_bytes = None
         torch.cuda.synchronize()
         torch.cuda.reset_peak_memory_stats()
@@ -92,7 +97,7 @@ class SampleInstrument:
         def timed_init_context(**kwargs):
             self._prefill_end = pool.record()
             context = init_context(**kwargs)
-            self._draft_prefill_end = pool.record()
+            self._init_context_end = pool.record()
             self._prefill_peak_bytes = torch.cuda.max_memory_allocated()
             torch.cuda.reset_peak_memory_stats()
             return context
@@ -108,7 +113,9 @@ class SampleInstrument:
             return timed_init_context, propose, update, recording_post_verify
 
         def timed_propose(**kwargs):
-            step = [pool.record(), None, None, None, None]
+            # Step 0 starts where init_context ended; only loop bookkeeping lies between.
+            start = pool.record() if self._steps else self._init_context_end
+            step = [start, None, None, None, None]
             self._steps.append(step)
             proposal = propose(**kwargs)
             step[_PROPOSE_END] = pool.record()
@@ -128,38 +135,48 @@ class SampleInstrument:
         torch.cuda.synchronize()
         wall_ms = (time.perf_counter() - self._wall_start) * 1e3
 
-        if self._draft_prefill_end is None:
-            # The first sampled token was a stop token: no draft prefill, no decode.
+        if self._init_context_end is None:
+            # The first sampled token was a stop token: no init_context, no steps.
             return SampleTiming(
                 target_prefill_ms=self._start.elapsed_time(end),
-                draft_prefill_ms=None,
-                decode_ms=None,
+                init_context_ms=None,
                 wall_ms=wall_ms,
                 prefill_peak_bytes=peak_bytes,
                 decode_peak_bytes=None,
                 step_draft_ms=[] if self.step_timing else None,
-                step_verify_ms=[] if self.step_timing else None,
+                step_verification_ms=[] if self.step_timing else None,
+                step_commit_ms=[] if self.step_timing else None,
+                step_update_ms=[] if self.step_timing else None,
             )
 
-        step_draft_ms = step_verify_ms = None
+        draft_ms = verification_ms = commit_ms = update_ms = None
         if self.step_timing:
-            step_draft_ms, step_verify_ms = [], []
-            for step in self._steps:
-                draft_ms = step[_PROPOSE_START].elapsed_time(step[_PROPOSE_END])
-                if step[_UPDATE_START] is not None:
-                    draft_ms += step[_UPDATE_START].elapsed_time(step[_UPDATE_END])
-                step_draft_ms.append(draft_ms)
-                step_verify_ms.append(step[_PROPOSE_END].elapsed_time(step[_VERIFY_END]))
+            draft_ms, verification_ms, commit_ms, update_ms = [], [], [], []
+            step_ends = [step[_PROPOSE_START] for step in self._steps[1:]] + [end]
+            for step, step_end in zip(self._steps, step_ends):
+                draft_ms.append(step[_PROPOSE_START].elapsed_time(step[_PROPOSE_END]))
+                verification_ms.append(step[_PROPOSE_END].elapsed_time(step[_VERIFY_END]))
+                if step[_UPDATE_START] is None:
+                    # The final stop-token step skips update.
+                    update_ms.append(0.0)
+                    commit_ms.append(step[_VERIFY_END].elapsed_time(step_end))
+                else:
+                    update_ms.append(step[_UPDATE_START].elapsed_time(step[_UPDATE_END]))
+                    commit_ms.append(
+                        step[_VERIFY_END].elapsed_time(step[_UPDATE_START])
+                        + step[_UPDATE_END].elapsed_time(step_end)
+                    )
 
         return SampleTiming(
             target_prefill_ms=self._start.elapsed_time(self._prefill_end),
-            draft_prefill_ms=self._prefill_end.elapsed_time(self._draft_prefill_end),
-            decode_ms=self._draft_prefill_end.elapsed_time(end),
+            init_context_ms=self._prefill_end.elapsed_time(self._init_context_end),
             wall_ms=wall_ms,
             prefill_peak_bytes=self._prefill_peak_bytes,
             decode_peak_bytes=peak_bytes,
-            step_draft_ms=step_draft_ms,
-            step_verify_ms=step_verify_ms,
+            step_draft_ms=draft_ms,
+            step_verification_ms=verification_ms,
+            step_commit_ms=commit_ms,
+            step_update_ms=update_ms,
         )
 
 

@@ -36,13 +36,20 @@ See proposal.md (Why) and the two spec deltas for the requirements. These facts 
 An instrumentation mixin overrides `generate_one_sample`. It calls the unchanged `generate_decoding_sample` with wrapped versions of the evaluator's own `_init_context`, `_propose`, `_update` and `_post_verify` (or a no-op when the evaluator has none, as EAGLE-3 does). The wrapper boundaries map exactly to the phases the specs require:
 
 ```
-sample start ─ prefill ─▶ init_context ─▶ │ propose │ verify ─▶ post_verify ─▶ commit ─▶ │ update │ ─▶ next step
-            [target prefill] [draft prefill] [ draft ] [ verification ]                  [ draft ]
+sample start ─ prefill ─▶ init_context ─▶ │ propose │ verify ─▶ post_verify ─ commit ─▶ │ update │ ─ stop check ─▶ next step
+            [target prefill] [init_context] [ draft ] [ verification ] [   commit     ] [ update ] [  commit   ]
 ```
 
+Consecutive phases share boundary events, so the phases tile the sample's GPU-stream timeline:
+
+- Target prefill = sample start → `init_context` entry.
+- Init context = `init_context` duration. Step 0's draft starts at its exit; only the loop condition lies between.
+- Draft = `propose` duration.
 - Verification = `post_verify` entry − `propose` exit. `post_verify` is called immediately after `verify_draft_tokens`.
-- Draft = `propose` duration + `update` duration. The `update` part matters for EAGLE-3, whose cache extension runs there.
-- Commit and KV crop (the gap between `post_verify` and `update`) are covered by the per-sample decode time, not by either per-step latency.
+- Update = `update` duration (EAGLE-3 cache extension, DSpark context-feature extraction); 0 for the final stop-token step, which skips `update`.
+- Commit = everything else in the step: `post_verify` entry → `update` entry (inner `post_verify` hook, token commit, KV crop) plus `update` exit → next `propose` entry or sample end (stop-token check; output trimming after the final step).
+
+Sample-level draft / verification / commit / update are the direct sums of the step values, in step order. Decode time and per-token latencies are derived in post-processing (`Σ` of the four step phases).
 
 *Alternatives:*
 - Add a `step_hook=None` argument to `generate_decoding_sample`. This is a small upstream-compatible edit, kept as the fallback if wrapping proves insufficient.
@@ -56,9 +63,9 @@ Why this matters: DSpark/DFlash `propose` contains no host sync, so the host nor
 
 Event intervals measure the GPU-stream timeline, including idle gaps caused by host-side launch overhead. That is the latency users experience.
 
-Per-sample prefill, draft-prefill and decode durations come from the same events. A wall-clock total per sample (`perf_counter` with `synchronize()` at start and end) is stored as a cross-check.
+Per-sample target prefill and init-context durations come from the same events. A wall-clock total per sample (`perf_counter` with `synchronize()` at start and end) is stored as a cross-check.
 
-A `step_timing` switch disables the per-step events and keeps the four sample-level events (start, prefill end, draft-prefill end, end). This is how instrumentation overhead is measured.
+A `step_timing` switch disables the per-step events and keeps the sample-level events (start, prefill end, init-context end, end). The step phases and their sums are then `null`; instrumentation overhead is measured by comparing per-sample `wall_ms` between the two settings.
 
 *Alternative:* `synchronize()` + `perf_counter` at every boundary. Simpler, but changes execution overlap. It may still be useful as a debug mode.
 
@@ -113,7 +120,7 @@ This satisfies process isolation and avoids double `init_process_group`.
 ### D8. Memory: host-side allocator statistics
 
 - `reset_peak_memory_stats()` at sample start.
-- At the `init_context` wrapper's exit (end of draft prefill): read `max_memory_allocated()` as the prefill peak, then reset.
+- At the `init_context` wrapper's exit (end of init context): read `max_memory_allocated()` as the prefill peak, then reset.
 - At sample end: read the decode peak.
 
 The CUDA caching allocator updates these statistics when work is enqueued, so reading them needs no sync. Once per worker, after models load, record `memory_allocated()` and target and draft parameter counts.
@@ -157,7 +164,7 @@ pytest tests live in `experiments/tests/`:
 ## Risks / Trade-offs
 
 - **[Timings are specific to the HF eager stack]** bsz=1, `sdpa`, `DynamicCache`, no CUDA graphs: per-token latency includes substantial launch and Python overhead, so absolute speedups will not transfer to vLLM/SGLang. → Record the stack in the manifest and state it in the report. Relative comparison within the stack stays valid.
-- **[Event timing misses host-only gaps at the very start of a step]** → Per-sample wall-clock cross-check. The sum of step components vs decode time is analyzed in the notebook.
+- **[Event timing misses host-only gaps before the first event]** The step phases tile the timeline between events, but host-only time before the sample-start event is not on the GPU stream. → Per-sample wall-clock cross-check against the sum of all phases, analyzed in the notebook.
 - **[Reduced-K block drafters run off-distribution]** Trained at block 7, run at 3/5. This is an intended part of the study. → The manifest records trained length and `K`, so plots can label it.
 - **[EAGLE-3 is chain-only here]** → Label in the report. Not changed.
 - **[Uniform `output_hidden_states=True` overhead]** The prompt keeps all 37 hidden states, about 190 KB per token. This inflates the prefill peak for every method including AR. → Prefill and decode peaks are separate. "Additional memory" is computed from the decode peak.

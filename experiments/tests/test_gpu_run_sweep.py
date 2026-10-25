@@ -14,13 +14,14 @@ pytestmark = pytest.mark.gpu
 REPO_ROOT = Path(__file__).resolve().parents[2]
 TIMING_FIELDS = {
     "target_prefill_ms",
-    "draft_prefill_ms",
-    "decode_ms",
+    "init_context_ms",
+    "draft_ms",
+    "verification_ms",
+    "commit_ms",
+    "update_ms",
     "wall_ms",
     "prefill_peak_bytes",
     "decode_peak_bytes",
-    "draft_ms",
-    "verify_ms",
 }
 
 
@@ -66,6 +67,10 @@ def test_two_method_run(tmp_path, evaluators):
         assert check_parity(run_dir) == []
         summary = read_jsonl([run_dir / "summary.jsonl"])
         assert [(r["method"], r["dataset"], r["k"]) for r in summary] == [("ar", "gsm8k", 0), ("dspark", "gsm8k", 3)]
+        for row in summary:
+            metrics = row["metrics"]
+            assert 0 <= metrics["acceptance_length"] <= metrics["draft_tokens_per_proposal"] <= row["k"]
+            assert row["deepspec_metrics"]["acceptance_length"] == metrics["committed_per_step"]
         manifest = json.loads((run_dir / "manifest.json").read_text())
         assert manifest["config"]["generation"]["max_new_tokens"] == 64
         ar_info = json.loads((run_dir / "workers/ar.rank0.json").read_text())

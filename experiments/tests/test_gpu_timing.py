@@ -66,20 +66,29 @@ def _run_toy_sample(sleep, step_timing):
     return instrument, instrument.end()
 
 
+def _phases(timing):
+    return (timing.step_draft_ms, timing.step_verification_ms, timing.step_commit_ms, timing.step_update_ms)
+
+
 def test_phase_attribution(sleep_ms):
     instrument, timing = _run_toy_sample(sleep_ms, step_timing=True)
     assert _close(timing.target_prefill_ms, 5)
-    assert _close(timing.draft_prefill_ms, 2)
-    assert _close(timing.decode_ms, (3 + 6 + 1 + 4) + (3 + 6 + 1))
-    assert all(_close(m, e) for m, e in zip(timing.step_draft_ms, [3 + 4, 3]))
-    assert all(_close(m, 6) for m in timing.step_verify_ms)
+    assert _close(timing.init_context_ms, 2)
+    assert all(_close(m, 3) for m in timing.step_draft_ms)
+    assert all(_close(m, 6) for m in timing.step_verification_ms)
+    assert all(_close(m, 1) for m in timing.step_commit_ms)
+    assert _close(timing.step_update_ms[0], 4) and timing.step_update_ms[1] == 0.0
     assert instrument.drafted_lengths == [3, 3]
-    assert timing.wall_ms >= timing.target_prefill_ms + timing.draft_prefill_ms + timing.decode_ms - 0.5
+    # Phases tile the sample timeline: nothing lost, nothing counted twice.
+    total = timing.target_prefill_ms + timing.init_context_ms + sum(map(sum, _phases(timing)))
+    assert _close(total, 5 + 2 + (3 + 6 + 1 + 4) + (3 + 6 + 1))
+    assert timing.wall_ms >= total - 0.5
 
 
 def test_step_timing_off_keeps_sample_timing(sleep_ms):
     instrument, timing = _run_toy_sample(sleep_ms, step_timing=False)
-    assert timing.step_draft_ms is None and timing.step_verify_ms is None
+    assert all(phase is None for phase in _phases(timing))
     assert _close(timing.target_prefill_ms, 5)
-    assert _close(timing.decode_ms, 24)
+    assert _close(timing.init_context_ms, 2)
+    assert timing.wall_ms >= 5 + 2 + 24 - 0.5
     assert instrument.drafted_lengths == [3, 3]

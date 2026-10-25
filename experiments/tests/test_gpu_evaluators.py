@@ -212,7 +212,12 @@ def _check_instrumentation_transparent(evaluators, method, step_timing, k):
     assert step_lists(instrumented) == step_lists(plain)
     for response in instrumented:
         assert len(response.drafted_lengths) == len(response.acceptance_lengths)
+        timing = response.timing
+        phases = (timing.step_draft_ms, timing.step_verification_ms, timing.step_commit_ms, timing.step_update_ms)
         if step_timing:
-            assert len(response.timing.step_draft_ms) == len(response.acceptance_lengths)
+            assert all(len(p) == len(response.acceptance_lengths) for p in phases)
+            # Phases tile the decode timeline: their sum is bounded by the synced wall clock.
+            total = timing.target_prefill_ms + (timing.init_context_ms or 0.0) + sum(map(sum, phases))
+            assert total <= timing.wall_ms + 0.5
         else:
-            assert response.timing.step_draft_ms is None
+            assert all(p is None for p in phases)

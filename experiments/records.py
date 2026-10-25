@@ -12,6 +12,10 @@ from dataclasses import asdict
 from types import SimpleNamespace
 
 
+# Per-step timing phases; each sample record holds their sums under the same names.
+STEP_PHASES = ("draft_ms", "verification_ms", "commit_ms", "update_ms")
+
+
 def build_records(
     *,
     key: dict,
@@ -36,10 +40,25 @@ def build_records(
     assert num_steps == len(proposal_lengths) == len(accepted_draft_lengths) == len(
         drafted_lengths
     ), "per-step lists must have equal length"
-    step_draft_ms = timing["step_draft_ms"]
-    step_verify_ms = timing["step_verify_ms"]
-    if step_draft_ms is not None:
-        assert len(step_draft_ms) == len(step_verify_ms) == num_steps
+    step_phases = {phase: timing[f"step_{phase}"] for phase in STEP_PHASES}
+    step_timing = step_phases["draft_ms"] is not None
+    for phase, values in step_phases.items():
+        assert (values is not None) == step_timing, f"{phase}: step timing must be all on or all off"
+        assert values is None or len(values) == num_steps, f"{phase}: one value per step"
+
+    for step in range(num_steps):
+        drafted = int(drafted_lengths[step])
+        effective = int(proposal_lengths[step])
+        accepted = int(accepted_draft_lengths[step])
+        committed = int(acceptance_lengths[step])
+        assert 0 <= accepted <= effective <= drafted, (
+            f"step {step}: need 0 <= accepted ({accepted}) <= effective_len ({effective}) "
+            f"<= drafted_len ({drafted})"
+        )
+        # committed = accepted + bonus/corrected token, or accepted alone on a stop token.
+        assert committed - accepted in (0, 1), (
+            f"step {step}: committed ({committed}) must be accepted ({accepted}) or accepted + 1"
+        )
 
     length_limited = not stopped_by_stop_token
     committed_total = 1 + sum(int(x) for x in acceptance_lengths)
@@ -62,8 +81,9 @@ def build_records(
         "num_steps": num_steps,
         "stop_reason": "length" if length_limited else "stop_token",
         "target_prefill_ms": timing["target_prefill_ms"],
-        "draft_prefill_ms": timing["draft_prefill_ms"],
-        "decode_ms": timing["decode_ms"],
+        "init_context_ms": timing["init_context_ms"],
+        # Direct sums of the step values, in step order; None with step timing off.
+        **{phase: None if values is None else sum(values) for phase, values in step_phases.items()},
         "wall_ms": timing["wall_ms"],
         "prefill_peak_bytes": timing["prefill_peak_bytes"],
         "decode_peak_bytes": timing["decode_peak_bytes"],
@@ -77,8 +97,7 @@ def build_records(
             "effective_len": int(proposal_lengths[step]),
             "accepted": int(accepted_draft_lengths[step]),
             "committed": int(acceptance_lengths[step]),
-            "draft_ms": None if step_draft_ms is None else step_draft_ms[step],
-            "verify_ms": None if step_verify_ms is None else step_verify_ms[step],
+            **{phase: None if values is None else values[step] for phase, values in step_phases.items()},
         }
         for step in range(num_steps)
     ]

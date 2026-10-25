@@ -23,7 +23,7 @@ For every speculative step, a record SHALL be stored with:
 - the sample key and step index;
 - requested draft length, drafted length (tokens produced by the drafter) and effective draft length (after stop-token truncation);
 - accepted draft tokens and committed tokens;
-- draft latency and verification latency.
+- draft, verification, commit and update latency.
 
 #### Scenario: Stop token inside accepted draft
 - **WHEN** an accepted draft token is a stop token
@@ -33,28 +33,40 @@ For every speculative step, a record SHALL be stored with:
 - **WHEN** a sample's step records are summed
 - **THEN** the number of step records equals the sample's step count, and the summed committed tokens plus the one token sampled at prefill equal the sample's generated length, unless the sample was cut at the max-new-tokens limit, in which case the sum is greater than or equal to it
 
-### Requirement: Prefill and decode timing are separated
-Each sample SHALL report three times separately:
-- target prefill time: prompt forward plus first-token sampling;
-- draft-side prefill time: drafter state initialization from prompt features before the first step;
-- decode time: from the end of draft-side prefill to the end of generation.
+### Requirement: Timing is recorded per execution phase
+Timing SHALL be recorded as raw, non-overlapping execution phases. Derived latencies (for example decode time or latency per token) are left to post-processing of the stored records.
 
-Decode time excludes both prefill components.
+Each step SHALL record:
+- draft latency: the drafter producing the proposal;
+- verification latency: the target forward on the proposal and the acceptance decision;
+- update latency: updating drafter state with the committed tokens; zero for a step that skips the update;
+- commit latency: the rest of the step, i.e. committing tokens, cropping the KV cache, the stop-token check and any loop bookkeeping before the next step (or the end of generation).
 
-#### Scenario: EAGLE-3 draft prefill
+
+#### Scenario: EAGLE-3 init context
 - **WHEN** an `eagle3` sample is decoded
-- **THEN** the drafter's processing of the prompt before the first step is reported as draft-side prefill time and is not included in decode time
+- **THEN** the drafter's processing of the prompt before the first step is reported as init-context time and is not included in any step phase
+
+#### Scenario: EAGLE-3 cache extension
+- **WHEN** an `eagle3` step commits tokens and the drafter extends its cache with them
+- **THEN** that extension time is counted in that step's update latency, not in its draft latency
 
 #### Scenario: Block drafter first step
 - **WHEN** a `dflash` or `dspark` sample is decoded
 - **THEN** the first step's record is identifiable as step 0, so that its draft latency, which includes projecting the prompt context, can be analyzed separately
 
-### Requirement: Draft latency covers all drafter work in a step
-A step's draft latency SHALL include all drafter computation attributable to that step: producing the proposal, and updating drafter state with committed tokens after verification. Verification latency SHALL cover the target forward on the proposal and the acceptance decision.
+### Requirement: Per-sample timing
+Each sample SHALL record:
+- target prefill time: prompt forward plus first-token sampling;
+- init-context time: the method's state initialization from the prompt after target prefill, before the first step;
+- draft, verification, commit and update time, each the direct sum of that phase over the sample's steps;
+- wall-clock time.
 
-#### Scenario: EAGLE-3 cache extension
-- **WHEN** an `eagle3` step commits tokens and the drafter extends its cache with them
-- **THEN** that extension time is counted in that step's draft latency
+With per-step timing on, target prefill, init-context and the four step phases SHALL together cover the sample's GPU-stream timeline without gaps or overlap. The same phase boundaries SHALL be used for every method.
+
+#### Scenario: Sample phases match steps
+- **WHEN** a sample's step records are summed per phase
+- **THEN** each sum equals the sample record's value for that phase
 
 ### Requirement: GPU-asynchrony-aware timing without extra synchronization
 Per-step timings SHALL measure GPU execution, so they are correct under asynchronous CUDA execution. They SHALL NOT add host-device synchronization points inside the decoding loop beyond those already present. Per-sample wall-clock times SHALL be taken with the device synchronized at sample start and end.
@@ -64,11 +76,11 @@ Per-step timings SHALL measure GPU execution, so they are correct under asynchro
 - **THEN** the recorded draft latency still includes that kernel execution time
 
 ### Requirement: Instrumentation overhead is measurable
-Per-step timing SHALL be switchable off while keeping per-sample timing, so its overhead on decode time can be measured on the same samples.
+Per-step timing SHALL be switchable off while keeping target prefill, init-context and wall-clock time, so its overhead can be measured on the same samples. With per-step timing off, the step phases and their per-sample sums are recorded as absent.
 
 #### Scenario: Overhead comparison
 - **WHEN** the same (method, dataset, K) is run with per-step timing on and off
-- **THEN** both runs produce identical acceptance results, and their per-sample decode times can be compared
+- **THEN** both runs produce identical acceptance results, and their per-sample wall-clock times can be compared
 
 ### Requirement: Instrumentation does not change decoding results
 For the same seed, samples and `K`, enabling instrumentation SHALL NOT change generated tokens or acceptance results compared with running the same evaluator without it.
@@ -78,7 +90,7 @@ For the same seed, samples and `K`, enabling instrumentation SHALL NOT change ge
 - **THEN** the per-step accepted counts and generated token ids are identical
 
 ### Requirement: Peak memory per phase
-Each sample SHALL report two values of peak allocated GPU memory: the peak during target and draft-side prefill, and the peak during decode. Each run SHALL also record allocated memory after model loading, and target and draft parameter counts.
+Each sample SHALL report two values of peak allocated GPU memory: the peak during target prefill and init-context, and the peak during the decoding steps. Each run SHALL also record allocated memory after model loading, and target and draft parameter counts.
 
 #### Scenario: Decode peak excludes prefill
 - **WHEN** a long prompt's prefill allocates more memory than any decode step

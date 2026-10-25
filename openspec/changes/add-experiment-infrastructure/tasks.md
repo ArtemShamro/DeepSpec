@@ -46,3 +46,8 @@
   - `git status` is clean apart from the change's own source files.
 - [x] 5.2 Measure instrumentation overhead: run one speculative method on GSM8K (10 samples, K=7) with `step_timing` on and off. Report the relative difference in mean per-sample decode time, targeting ≤ 3%. If it is higher, record it in `experiments/README.md` and in design.md Risks before proceeding.
 - [x] 5.3 Record the measured smoke-run wall time per method in `experiments/README.md`, with an extrapolated estimate for the main config, so the full sweep can be scheduled.
+
+## 6. Per-phase timing schema
+
+- [x] 6.1 Replace `draft_prefill_ms` / `decode_ms` with raw phases: sample `target_prefill_ms`, `init_context_ms`, `draft_ms`, `verification_ms`, `commit_ms`, `update_ms` (step sums), `wall_ms`; step `draft_ms`, `verification_ms`, `commit_ms`, `update_ms` (`verify_ms` renamed). `draft_ms` no longer includes `update`. Phases share event boundaries so they tile the timeline; `null` with `step_timing=false`.
+- [x] 6.2 Update tests: toy-kernel phase attribution incl. commit and skipped update, phases summing to the sample timeline; CPU tests for sample = Σ step per phase and all-or-nothing step timing; instrumented-vs-plain and runner GPU tests on the new fields.

@@ -23,6 +23,7 @@ from deepspec.eval.base_evaluator import load_and_process_dataset
 from deepspec.utils.config import config_to_plain_dict, to_config_node
 from experiments.evaluators import SWEEP_EVALUATORS
 from experiments.manifest import write_manifest, write_worker_info
+from experiments.metrics import acceptance_metrics
 from experiments.records import records_from_response
 from experiments.sweep_config import load_sweep_config, validate_sweep_config
 
@@ -108,16 +109,19 @@ def worker(local_rank: int, cfg: dict, method: dict, run_dir: str) -> None:
 
                 metric_summary = evaluator.allreduce_response_metrics(responses)
                 if rank == 0:
-                    metrics_row = evaluator.build_metrics_row(
-                        dataset_name=dataset_name,
-                        metric_summary=metric_summary,
-                    )
                     summary_row = {
                         "method": name,
                         "dataset": dataset_name,
                         "k": k,
                         "num_positions": evaluator.max_proposal_tokens,
-                        "metrics": metrics_row,
+                        "metrics": acceptance_metrics(
+                            dataset_name=dataset_name,
+                            metric_summary=metric_summary,
+                        ),
+                        "deepspec_metrics": evaluator.build_metrics_row(
+                            dataset_name=dataset_name,
+                            metric_summary=metric_summary,
+                        ),
                     }
                     with open(run_dir / "summary.jsonl", "a", encoding="utf-8") as handle:
                         handle.write(json.dumps(summary_row) + "\n")
