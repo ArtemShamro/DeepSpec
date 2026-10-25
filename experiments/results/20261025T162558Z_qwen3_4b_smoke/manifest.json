@@ -1,25 +1,30 @@
 {
-  "run_id": "20261024T174431Z_qwen3_4b_smoke",
-  "start_time": "2026-10-24T17:44:31.994173+00:00",
+  "run_id": "20261025T162558Z_qwen3_4b_smoke",
+  "start_time": "2026-10-25T16:25:58.400164+00:00",
   "config_path": "/home/user/Documents/DeepSpec/experiments/configs/qwen3_4b_smoke.py",
-  "opts": [],
+  "opts": [
+    "datasets=[[gsm8k, 5], [math500, 5], [aime25, 5]]",
+    "draft_lengths=[3, 5, 7]"
+  ],
   "config": {
     "datasets": [
       [
         "gsm8k",
-        3
+        5
       ],
       [
         "math500",
-        3
+        5
       ],
       [
         "aime25",
-        3
+        5
       ]
     ],
     "draft_lengths": [
-      3
+      3,
+      5,
+      7
     ],
     "generation": {
       "temperature": 1.0,
@@ -56,7 +61,7 @@
     "dspark": 7
   },
   "git": {
-    "commit": "bf4bf74d1745381b0fe4430de2172b82de5f4308",
+    "commit": "c1e39a5df4754cc45d45b5ccf4d75a7736be1b0b",
     "dirty": true
   },
   "versions": {
