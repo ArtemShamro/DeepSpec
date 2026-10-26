@@ -23,9 +23,9 @@ Datasets:
 
 Draft length `K`:
 
-- `K ∈ {3, 5, 7}`
+- `K ∈ {4, 7, 8, 12, 16}`
 
-All values are within the 7 draft tokens the released DeepSpec checkpoints were trained with (`*_block7`, `*_ttt7`).
+The released DeepSpec checkpoints were trained with 7 draft tokens (`*_block7`, `*_ttt7`). `K = 4` runs below and `K = 8, 12, 16` run above the trained draft length; this extrapolation is an intended part of the study.
 
 ## Metrics
 

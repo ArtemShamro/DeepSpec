@@ -113,12 +113,7 @@ def validate_sweep_config(
                 f"method {name!r}: checkpoint {draft_path} has architecture {arch!r}, "
                 f"expected one of {sorted(architectures)}"
             )
-        trained = int(getattr(draft_config, length_attr))
-        for k in cfg.draft_lengths:
-            if k > trained:
-                raise ValueError(
-                    f"method {name!r}: draft length K={k} exceeds the trained draft "
-                    f"length {trained} of checkpoint {draft_path}"
-                )
-        trained_lengths[name] = trained
+        # K above the trained length is allowed (the drafter runs off its training length);
+        # the trained length is only recorded in the manifest.
+        trained_lengths[name] = int(getattr(draft_config, length_attr))
     return trained_lengths

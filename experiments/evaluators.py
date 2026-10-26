@@ -24,12 +24,10 @@ from deepspec.eval.eagle3 import Qwen3Eagle3Evaluator
 from experiments.instrumentation import InstrumentedMixin
 
 
-def check_draft_length(method: str, k: int, trained_length: int) -> None:
-    if not 1 <= int(k) <= int(trained_length):
-        raise ValueError(
-            f"method {method!r}: draft length K={k} is outside [1, {trained_length}]; "
-            f"the checkpoint was trained with draft length {trained_length}."
-        )
+def check_draft_length(method: str, k: int) -> None:
+    # K above the checkpoint's trained draft length is allowed.
+    if int(k) < 1:
+        raise ValueError(f"method {method!r}: draft length K={k} must be >= 1")
 
 
 class _SettableKMixin:
@@ -43,7 +41,7 @@ class _SettableKMixin:
         return int(self.k)
 
     def set_k(self, k: int) -> None:
-        check_draft_length(self.args.method, k, self.trained_draft_length)
+        check_draft_length(self.args.method, k)
         self.k = int(k)
 
 

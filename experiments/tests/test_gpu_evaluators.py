@@ -77,8 +77,8 @@ def test_dspark_k3_block_and_proposals(evaluators, monkeypatch):
 
 def test_dspark_k_above_trained_length(evaluators):
     evaluator = evaluators.get("dspark")
-    with pytest.raises(ValueError, match=r"'dspark'.*K=8.*7"):
-        evaluator.set_k(8)
+    evaluator.set_k(8)
+    assert evaluator.max_proposal_tokens == 8
     with pytest.raises(ValueError, match="K=0"):
         evaluator.set_k(0)
 
@@ -126,8 +126,8 @@ def test_eagle3_k3_proposals(evaluators):
 
 def test_eagle3_k_above_trained_length(evaluators):
     evaluator = evaluators.get("eagle3")
-    with pytest.raises(ValueError, match=r"'eagle3'.*K=8.*7"):
-        evaluator.set_k(8)
+    evaluator.set_k(8)
+    assert evaluator.max_proposal_tokens == 8
 
 
 def test_eagle3_k7_matches_deepspec_evaluator(evaluators):

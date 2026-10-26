@@ -72,10 +72,10 @@ def test_k_below_one(tmp_path):
         validate_sweep_config(cfg, draft_config_loader=fake_draft_configs)
 
 
-def test_k_above_trained_length(tmp_path):
-    cfg = load_sweep_config(_write_config(tmp_path, MINIMAL), ["draft_lengths=[3,8]"])
-    with pytest.raises(ValueError, match=r"'dspark'.*K=8.*trained draft length 7"):
-        validate_sweep_config(cfg, draft_config_loader=fake_draft_configs)
+def test_k_above_trained_length_allowed(tmp_path):
+    cfg = load_sweep_config(_write_config(tmp_path, MINIMAL), ["draft_lengths=[3,8,16]"])
+    trained = validate_sweep_config(cfg, draft_config_loader=fake_draft_configs)
+    assert trained["dspark"] == 7
 
 
 @pytest.mark.parametrize("path", [SMOKE, MAIN])

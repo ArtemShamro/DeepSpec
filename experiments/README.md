@@ -2,7 +2,7 @@
 
 Infrastructure for the comparison described in [EXPERIMENTS.md](../EXPERIMENTS.md): the
 autoregressive Qwen3-4B baseline, EAGLE-3, DFlash and DSpark on GSM8K / Math500 / AIME25 at
-draft lengths `K ∈ {3, 5, 7}`, with per-sample and per-step timing, memory and acceptance records.
+draft lengths `K ∈ {4, 7, 8, 12, 16}`, with per-sample and per-step timing, memory and acceptance records.
 
 The runner reuses DeepSpec's evaluators, dataset loading, sample selection, seeding and
 decoding loop (`deepspec/eval/base_evaluator.py::generate_decoding_sample`) unchanged. Nothing
@@ -47,8 +47,9 @@ Like `eval.py`, the runner starts one worker per visible GPU (`CUDA_VISIBLE_DEVI
 are strided across ranks exactly as in DeepSpec. Each method runs in its own spawned process,
 after the previous method's process has exited.
 
-The config is validated before any model is loaded: unknown methods, `K < 1`, and `K` above the
-checkpoint's trained draft length (read from its `config.json`) are rejected.
+The config is validated before any model is loaded: unknown methods and `K < 1` are rejected.
+`K` above the checkpoint's trained draft length (read from its `config.json`) is allowed; the
+trained length is recorded in the manifest.
 
 ### Config fields
 
@@ -67,10 +68,11 @@ checkpoint's trained draft length (read from its `config.json`) are rejected.
 ## K and AR semantics
 
 - **EAGLE-3**: `K` chained draft steps (chain only, no tree). The chain stops early when the drafter
-  samples a stop token.
+  samples a stop token. The released checkpoint is trained with TTT length 7, so `K = 8, 12, 16`
+  chain past its training length.
 - **DFlash / DSpark**: the drafter runs on a block of `K` positions (anchor + `K-1` mask slots) and
-  proposes `K` draft tokens. The released checkpoints are trained with block 7, so `K = 3, 5` run
-  the drafter off its training block size. This is an intended part of the study.
+  proposes `K` draft tokens. The released checkpoints are trained with block 7, so `K = 4` and
+  `K = 8, 12, 16` run the drafter off its training block size. This is an intended part of the study.
 - **DSpark confidence head**: DeepSpec's calibration recorder is disabled; the threshold stays at
   DeepSpec's default `0.0`, so proposals are always full length. The confidence-head forward that
   `build_dspark_proposal` runs is algorithm code and is left as is.
