@@ -18,6 +18,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import torch
+from tqdm import tqdm
 
 from deepspec.eval.base_evaluator import load_and_process_dataset
 from deepspec.utils.config import config_to_plain_dict, to_config_node
@@ -53,12 +54,13 @@ class SampleWriter:
     so the i-th call corresponds to the i-th index of that range.
     """
 
-    def __init__(self, *, samples_file, steps_file, key: dict, indices, max_new_tokens: int):
+    def __init__(self, *, samples_file, steps_file, key: dict, indices, max_new_tokens: int, progress=None):
         self.samples_file = samples_file
         self.steps_file = steps_file
         self.key = key
         self.indices = iter(indices)
         self.max_new_tokens = max_new_tokens
+        self.progress = progress
 
     def __call__(self, response) -> None:
         sample, steps = records_from_response(
@@ -70,6 +72,8 @@ class SampleWriter:
         self.steps_file.writelines(json.dumps(step) + "\n" for step in steps)
         self.samples_file.flush()
         self.steps_file.flush()
+        if self.progress is not None:
+            self.progress.update(1)
 
 
 def worker(local_rank: int, cfg: dict, method: dict, run_dir: str) -> None:
@@ -83,6 +87,8 @@ def worker(local_rank: int, cfg: dict, method: dict, run_dir: str) -> None:
     max_new_tokens = int(cfg.generation.max_new_tokens)
 
     draft_lengths = [0] if name == "ar" else cfg.draft_lengths
+    num_experiments = len(draft_lengths) * len(cfg.datasets)
+    experiment_idx = 0
     with open(run_dir / f"samples.{name}.rank{rank}.jsonl", "a", encoding="utf-8") as samples_file, open(
         run_dir / f"steps.{name}.rank{rank}.jsonl", "a", encoding="utf-8"
     ) as steps_file:
@@ -95,16 +101,28 @@ def worker(local_rank: int, cfg: dict, method: dict, run_dir: str) -> None:
                     evaluator.run_dataset(dataset_name=dataset_name, max_samples=int(cfg.warmup_samples))
 
                 num_samples = min(int(max_samples), len(load_and_process_dataset(dataset_name)))
+                indices = range(rank, num_samples, world_size)
+                experiment_idx += 1
+                # Host-side only, updated after each sample's timing has ended.
+                progress = tqdm(
+                    total=len(indices),
+                    desc=f"[{experiment_idx}/{num_experiments}] {name} K={k} {dataset_name}",
+                    unit="sample",
+                    disable=rank != 0,
+                    dynamic_ncols=True,
+                )
                 writer = SampleWriter(
                     samples_file=samples_file,
                     steps_file=steps_file,
                     key={"method": name, "dataset": dataset_name, "k": k, "rank": rank},
-                    indices=range(rank, num_samples, world_size),
+                    indices=indices,
                     max_new_tokens=max_new_tokens,
+                    progress=progress,
                 )
                 evaluator.sample_sink = writer
                 responses = evaluator.run_dataset(dataset_name=dataset_name, max_samples=int(max_samples))
                 evaluator.sample_sink = None
+                progress.close()
                 assert next(writer.indices, None) is None, "sample index reconstruction out of sync"
 
                 metric_summary = evaluator.allreduce_response_metrics(responses)
