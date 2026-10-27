@@ -10,4 +10,5 @@ logs/
 build/
 dist/
 .DS_Store
-deepspec/utils/constant/internal.pyexperiments/results/
+deepspec/utils/constant/internal.py
+experiments/results/
