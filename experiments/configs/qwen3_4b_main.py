@@ -11,8 +11,8 @@ methods = [
 ]
 
 datasets = [
-    ("gsm8k", 100),
-    ("math500", 100),
+    ("gsm8k", 50),
+    ("math500", 50),
     ("aime25", 30),
 ]
 
