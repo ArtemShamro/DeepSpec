@@ -1,99 +1,52 @@
-# DeepSpec
+# Scaling Draft Length in Speculative Decoding: Acceptance-Latency Trade-offs Across EAGLE-3, DFlash, and DSpark
+<p align="center">
+  <a href="#about">About</a> •
+  <a href="#main-contributions">Main Contributions</a> •
+  <a href="#reproducing">Reproducing</a> •
+  <a href="#links">Links</a> •
+  <a href="#license">License</a>
+</p>
 
-DeepSpec is a full-stack codebase for training and evaluating draft models for speculative decoding. It contains data preparation utilities, draft model implementations, training code, and evaluation scripts.
+## About
 
-## Environment
+A research project built on a fork of [deepseek-ai/DeepSpec](https://github.com/deepseek-ai/DeepSpec). We compare three speculative decoding methods - EAGLE-3, DFlash and DSpark - against the autoregressive baseline under a common setup: Qwen3-4B target, released DeepSpec drafters (trained with 7 draft tokens), GSM8K / Math500 / AIME25, draft length `K ∈ {4, 7, 8, 12, 16}`, batch size 1 on a single RTX 3090.
 
-Install the Python dependencies:
+Main question: *which speculative decoding approach provides the best trade-off between accepted length and latency as the draft length increases?*
 
-```bash
-python -m pip install -r requirements.txt
-```
+Main report: [report.pdf](report.pdf)
 
-Data preparation additionally requires an inference engine to serve the target model when regenerating answers; see [scripts/data/README.md](./scripts/data/README.md) for details.
-
-## Workflow
-
-Run the stages in order — each stage's output feeds the next:
-
-1. **Data Preparation** — download prompts, regenerate target answers, and build the target cache.
-2. **Training** — train a draft model against the cached target outputs.
-3. **Evaluation** — measure speculative-decoding acceptance on benchmark tasks.
-
-## Data Preparation
-
-See [scripts/data/README.md](./scripts/data/README.md) for the step-by-step data pipeline:
-
-1. download and split training data,
-2. regenerate answers,
-3. prepare the target cache (storage warning: this can be very large — roughly 38 TB for the default `Qwen/Qwen3-4B` setting).
-
-## Training
-
-```bash
-bash scripts/train/train.sh
-```
-
-`train.sh` launches `train.py`, which spawns one worker per visible GPU. Select the algorithm and target model by pointing `config_path` at one of the configs under [config/](./config/) (e.g. `config/dspark/dspark_qwen3_4b.py`); see the script header for the full list of configs, how to override `config_path` / `target_cache_dir`, and how to use `--opts` to override individual config fields. Checkpoints are written to `~/checkpoints/<project_name>/<exp_name>/step_*`.
-
-Hardware: the default configs and scripts assume a single node with 8 GPUs. For fewer GPUs, reduce `CUDA_VISIBLE_DEVICES`.
+## Main Contributions
 
 
-## Evaluation
+<p align="center">
+  <img src="experiments/src/fig2b_latency_per_token_vs_k.png" width="600" alt="Decode latency per generated token vs K">
+</p>
 
-```bash
-bash scripts/eval/eval.sh
-```
+- **DSpark has the best acceptance-latency trade-off.** It is the fastest method at every K and on every dataset: 13.4 ms/token at K = 8, 12% less than DFlash and 34% less than EAGLE-3 (4.3× speedup over AR with ~34% more memory).
+- **No universal K.** For all methods the latency optimum is K = 8, next to the trained length, but the optimal K varies with task difficulty even within the math domain.
 
-`eval.sh` runs `eval.py` against a trained draft checkpoint over the speculative-decoding benchmarks in [eval_datasets/](./eval_datasets/) (gsm8k, math500, aime25, humaneval, mbpp, livecodebench, mt-bench, alpaca, arena-hard-v2). Set:
+<p align="center">
+  <img src="experiments/src/fig_readme_accept_len_latency_mean.png" width="750" alt="Accepted length (mean over datasets) and latency per step vs K">
+</p>
 
-- `target_name_or_path` — the target model the draft was trained against (e.g. `Qwen/Qwen3-4B`),
-- `draft_name_or_path` — the draft checkpoint, e.g. `~/checkpoints/deepspec/dspark_block7_qwen3_4b/step_latest`, or one of the Hugging Face repo IDs listed in [Released Checkpoints](#released-checkpoints).
+- **Reproduction at the trained length (K = 7).** The ranking DSpark > DFlash > EAGLE-3 is reproduced on all three datasets. DSpark improves accepted length by 26.0% over EAGLE-3 and 16.6% over DFlash (paper: 22.3% and 16.2%).
+- **Stronger degradation beyond the training horizon.** Unlike the DSpark paper, accepted length does not keep growing up to K = 16: DSpark saturates after K = 8 and DFlash declines.
+- **Larger DSpark overhead at batch size 1.** DSpark's per-step overhead over DFlash grows from 3.9% (K = 4) to 9.6% (K = 16), versus 0.2-1.3% reported at batch size 128.
 
-### Released Checkpoints
+## Reproducing
 
-The checkpoints below are the ones used for Table 1 in the [paper](https://arxiv.org/abs/2607.05147). Each checkpoint was trained on [open-perfectblend](https://huggingface.co/datasets/mlabonne/open-perfectblend) data generated by its corresponding target model in non-thinking mode, and is the direct output of the corresponding training configuration under [config/](./config/).
+See [experiments/README.md](experiments/README.md) for environment setup, sweep configs, the run command and output format.
 
+## Links
 
-| Algorithm | `Qwen/Qwen3-4B` | `Qwen/Qwen3-8B` | `Qwen/Qwen3-14B` | `google/gemma-4-12B-it` |
-| --- | --- | --- | --- | --- |
-| Eagle3 | [deepseek-ai/eagle3_qwen3_4b_ttt7](https://huggingface.co/deepseek-ai/eagle3_qwen3_4b_ttt7) | [deepseek-ai/eagle3_qwen3_8b_ttt7](https://huggingface.co/deepseek-ai/eagle3_qwen3_8b_ttt7) | [deepseek-ai/eagle3_qwen3_14b_ttt7](https://huggingface.co/deepseek-ai/eagle3_qwen3_14b_ttt7) | [deepseek-ai/eagle3_gemma4_12b_ttt7](https://huggingface.co/deepseek-ai/eagle3_gemma4_12b_ttt7) |
-| DFlash | [deepseek-ai/dflash_qwen3_4b_block7](https://huggingface.co/deepseek-ai/dflash_qwen3_4b_block7) | [deepseek-ai/dflash_qwen3_8b_block7](https://huggingface.co/deepseek-ai/dflash_qwen3_8b_block7) | [deepseek-ai/dflash_qwen3_14b_block7](https://huggingface.co/deepseek-ai/dflash_qwen3_14b_block7) | [deepseek-ai/dflash_gemma4_12b_block7](https://huggingface.co/deepseek-ai/dflash_gemma4_12b_block7) |
-| DSpark | [deepseek-ai/dspark_qwen3_4b_block7](https://huggingface.co/deepseek-ai/dspark_qwen3_4b_block7) | [deepseek-ai/dspark_qwen3_8b_block7](https://huggingface.co/deepseek-ai/dspark_qwen3_8b_block7) | [deepseek-ai/dspark_qwen3_14b_block7](https://huggingface.co/deepseek-ai/dspark_qwen3_14b_block7) | [deepseek-ai/dspark_gemma4_12b_block7](https://huggingface.co/deepseek-ai/dspark_gemma4_12b_block7) |
+- Notebook with data analysis: [experiments/notebooks/report.ipynb](experiments/notebooks/report.ipynb)
+- Experiments sweep config: [experiments/configs/qwen3_4b_main.py](experiments/configs/qwen3_4b_main.py)
+- Collected raw data: [Yandex Disc Link](https://disk.360.yandex.ru/d/jtVrrZIKN4IrWw)
+- Paper source: [report.tex](report.tex)
+- Original DeepSpec README: [README_DeepSpec.md](README_DeepSpec.md)
 
-> [!IMPORTANT]
-> If you cite these results in a new paper, align your setup with the training settings in this repository; otherwise, the comparison is not meaningful. For domain-specific use, fine-tune the draft model again for better results, especially if the target model is expected to run in thinking mode.
-
-## Supported Algorithms
-
-Currently, DeepSpec includes three draft models: [DSpark](https://arxiv.org/abs/2607.05147), [DFlash](https://arxiv.org/abs/2602.06036) and [Eagle3](https://arxiv.org/abs/2503.01840).
+DeepSpec algorithms are left untouched; all experiment code lives in [experiments/](experiments/).
 
 ## License
 
-DeepSpec is released under the [MIT License](./LICENSE). It includes code adapted
-from third-party projects under their own licenses; see [NOTICE](./NOTICE) for the
-full attribution.
-
-## Acknowledgements
-
-DeepSpec builds on the ideas and code of several excellent open-source projects:
-
-- [SpecForge](https://github.com/sgl-project/SpecForge) (Apache-2.0) — the overall training framework and Eagle3 implementation; portions of the Eagle3 modeling, loss, optimizer, attention, and evaluation code are adapted from it. Adapted files carry an in-file attribution comment, and the full notice is recorded in [NOTICE](./NOTICE).
-- [DFlash](https://github.com/z-lab/dflash) (MIT) — the DFlash draft-model design and training recipe.
-- [Qwen3](https://github.com/QwenLM/Qwen3) and [Gemma](https://github.com/google-deepmind/gemma) — the target model families supported in this repo.
-
-We thank the authors and maintainers of these projects. Contributions of new algorithms are welcome.
-
-## Citation
-
-```bibtex
-@misc{cheng2026dsparkconfidencescheduledspeculativedecoding,
-      title={DSpark: Confidence-Scheduled Speculative Decoding with Semi-Autoregressive Generation}, 
-      author={Xin Cheng and Xingkai Yu and Chenze Shao and Jiashi Li and Yunfan Xiong and Yi Qian and Jiaqi Zhu and Shirong Ma and Xiaokang Zhang and Jiasheng Ye and Qinyu Chen and Chengqi Deng and Jiping Yu and Damai Dai and Zhengyan Zhang and Yixuan Wei and Yixuan Tan and Wenkai Yang and Runxin Xu and Yu Wu and Zhean Xu and Xuanyu Wang and Muyang Chen and Rui Tian and Xiao Bi and Zhewen Hao and Shaoyuan Chen and Huanqi Cao and Wentao Zhang and Anyi Xu and Huishuai Zhang and Dongyan Zhao and Wenfeng Liang},
-      year={2026},
-      eprint={2607.05147},
-      archivePrefix={arXiv},
-      primaryClass={cs.AI},
-      url={https://arxiv.org/abs/2607.05147}, 
-}
-```
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](/LICENSE)
